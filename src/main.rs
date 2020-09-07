@@ -24,6 +24,27 @@ mod nlmf;
 const LATENCY_MS: f32 = 50.0;
 
 fn main() -> Result<(), anyhow::Error> {
+    // get mu from command line
+    let args: Vec<String> = std::env::args().collect();
+    const DEFAULT_MU: f32 = 1.0;
+    let mu: f32 = match args.len() {
+        // one argument passed
+        2 => match args[1].parse() {
+            Ok(val) => val,
+            _ => {
+                eprintln!(
+                    "Failed to parse mu value from command line; using default = {}.",
+                    DEFAULT_MU
+                );
+                DEFAULT_MU
+            }
+        },
+        _ => {
+            eprintln!("No value of mu given; using default = {}.", DEFAULT_MU);
+            DEFAULT_MU
+        }
+    };
+
     let host = cpal::default_host();
 
     // Default devices.
@@ -165,7 +186,7 @@ fn main() -> Result<(), anyhow::Error> {
             .take(1024)
             .collect::<Vec<f32>>()
     };
-    let mut filter: nlmf::NLMF<f32> = nlmf::NLMF::new(1024, 1.0, 1.0, weights);
+    let mut filter: nlmf::NLMF<f32> = nlmf::NLMF::new(1024, mu, 1.0, weights);
     let mut lowpass_filter = filter::Filter::new(filter::LowPass(2500.0));
 
     let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
