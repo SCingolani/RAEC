@@ -138,7 +138,7 @@ fn main() -> Result<(), anyhow::Error> {
                 is_even_sample = false;
                 last_sample = sample;
             } else {
-                let merged_sample = sample + last_sample;
+                let merged_sample = 0.5 * (sample + last_sample);
                 is_even_sample = true;
                 if input_ring_producer.push(merged_sample).is_err() {
                     output_fell_behind = true;
@@ -160,7 +160,7 @@ fn main() -> Result<(), anyhow::Error> {
                 is_even_sample = false;
                 last_sample = sample;
             } else {
-                let merged_sample = sample + last_sample;
+                let merged_sample = 0.5 * (sample + last_sample);
                 is_even_sample = true;
                 if capture_ring_producer.push(merged_sample).is_err() {
                     output_fell_behind = true;
