@@ -187,7 +187,9 @@ fn main() -> Result<(), anyhow::Error> {
             .collect::<Vec<f32>>()
     };
     let mut filter: nlmf::NLMF<f32> = nlmf::NLMF::new(1024, mu, 1.0, weights);
-    let mut lowpass_filter = filter::Filter::new(filter::LowPass(2500.0));
+    let mut lowpass_filter = filter::Filter::new(filter::LowPass(3400.0));
+    let mut highpass_fiter = filter::Filter::new(filter::HighPass(300.0));
+
 
     let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
         let mut input_fell_behind = None;
@@ -219,7 +221,7 @@ fn main() -> Result<(), anyhow::Error> {
                     .collect::<Vec<f32>>();
                 // filter_input.push(1.0);
                 let aec_output = filter.adapt(&filter_input, mic_sample);
-                let filtered = lowpass_filter.tick(mic_sample - aec_output);
+                let filtered = highpass_fiter.tick(lowpass_filter.tick(mic_sample - aec_output));
                 *sample = filtered;
                 last_sample = *sample;
                 is_odd_sample = true;
