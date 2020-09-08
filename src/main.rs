@@ -20,8 +20,9 @@ extern crate npy;
 
 mod filter;
 mod nlmf;
+mod plot;
 
-const LATENCY_MS: f32 = 50.0;
+const LATENCY_MS: f32 = 500.0;
 
 fn main() -> Result<(), anyhow::Error> {
     // get mu from command line
@@ -190,11 +191,20 @@ fn main() -> Result<(), anyhow::Error> {
     let mut lowpass_filter = filter::Filter::new(filter::LowPass(3400.0));
     let mut highpass_fiter = filter::Filter::new(filter::HighPass(300.0));
 
+    let (s1, r1) = channel();
+    //let debug_ring = RingBuffer::new(1);
+    //let (mut debug_ring_producer, mut debug_ring_consumer) = debug_ring.split();
 
-    let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+    let mut ref_time = None;
+    let mut counter = 0;
+
+    let output_data_fn = move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
         let mut input_fell_behind = None;
         let mut is_odd_sample = false;
         let mut last_sample: f32 = 0.0;
+        if ref_time.is_none() {
+            ref_time = Some(info.timestamp().callback);
+        };
         for sample in data {
             if is_odd_sample {
                 *sample = last_sample;
@@ -225,7 +235,6 @@ fn main() -> Result<(), anyhow::Error> {
                 *sample = filtered;
                 last_sample = *sample;
                 is_odd_sample = true;
-
                 //s3.send(last_sample).unwrap();
                 //println!("Weights: {:?}", filter_buffer);
             }
@@ -236,6 +245,21 @@ fn main() -> Result<(), anyhow::Error> {
                 err
             );
         }
+        /*
+        debug_ring_producer.push((info.timestamp().callback.duration_since(&ref_time.unwrap()).unwrap().as_secs_f32(),
+            filter.weights[0],
+            filter.weights[1023]
+        ));
+        */
+        counter += 1;
+        if counter == 2 {
+            s1.send((info.timestamp().callback.duration_since(&ref_time.unwrap()).unwrap().as_secs_f32(),
+               (input_ring_consumer.len() as f32) / ((latency_samples * 2) as f32),
+               (capture_ring_consumer.len() as f32) / ((latency_samples * 2) as f32),
+           )
+           ).unwrap();
+            counter = 0;
+        };
     };
 
     // Build streams.
@@ -259,9 +283,24 @@ fn main() -> Result<(), anyhow::Error> {
     input_stream.play()?;
     output_stream.play()?;
 
+    let mut plotter = plot::Plotter::new(5.0, 0.0, 1.0, 128)?;
+    // let mut plotter2 = plot::Plotter::new(2.0, -0.5,0.5, 65536)?;
+
     // Run for 3 seconds before closing.
     println!("Everything looks good! Press enter to exit...");
     //std::thread::sleep(std::time::Duration::from_secs(15));
+    while !plotter.window.is_key_down(minifb::Key::Escape) {
+        for val in r1.try_iter() {
+            plotter.data.push(val);
+        };
+    /*    if let Ok(val) = debug_ring_consumer.pop() {
+            plotter2.data.push(val);
+        };*/
+        plotter.tick()?;
+    //    plotter2.tick()?;
+    }
+    drop(plotter);
+    //drop(plotter2);
     let _ = stdin().read_line(&mut String::new());
 
     drop(input_stream);
