@@ -1,12 +1,12 @@
+use circular_queue::CircularQueue;
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
+use plotters::prelude::*;
 use plotters_bitmap::bitmap_pixel::BGRXPixel;
 use plotters_bitmap::BitMapBackend;
-use plotters::prelude::*;
 use std::collections::VecDeque;
+use std::convert::TryInto;
 use std::error::Error;
 use std::time::SystemTime;
-use circular_queue::CircularQueue;
-use std::convert::TryInto;
 
 const W: usize = 480;
 const H: usize = 320;
@@ -18,14 +18,21 @@ const FRAME_RATE: f64 = 30.0;
 pub struct Plotter {
     buf: Vec<u8>,
     pub window: Window,
-    cs: plotters::chart::ChartState<Cartesian2d<plotters::coord::types::RangedCoordf32, plotters::coord::types::RangedCoordf32>>,
+    cs: plotters::chart::ChartState<
+        Cartesian2d<plotters::coord::types::RangedCoordf32, plotters::coord::types::RangedCoordf32>,
+    >,
     last_flushed: std::time::Instant,
-    pub data: CircularQueue<(f32, f32, f32)>,
+    pub data: CircularQueue<(f32, f32, f32, f32)>,
     window_time: f32,
 }
 
 impl Plotter {
-    pub fn new(window_time:f32, minz: f32, maxz: f32, data_size: usize) -> Result<Plotter, anyhow::Error> {
+    pub fn new(
+        window_time: f32,
+        minz: f32,
+        maxz: f32,
+        data_size: usize,
+    ) -> Result<Plotter, anyhow::Error> {
         let mut buf = vec![0u8; W * H * 4];
         let root =
             BitMapBackend::<BGRXPixel>::with_buffer_and_format(&mut buf[..], (W as u32, H as u32))?
@@ -44,14 +51,8 @@ impl Plotter {
 
         let cs = chart.into_chart_state();
         drop(root);
-Ok(
-        Plotter {
-            window: Window::new(
-                    "Test window",
-                    W,
-                    H,
-                    WindowOptions::default()
-                )?,
+        Ok(Plotter {
+            window: Window::new("Test window", W, H, WindowOptions::default())?,
             buf: buf,
             cs: cs,
             last_flushed: std::time::Instant::now(),
@@ -61,7 +62,6 @@ Ok(
     }
 
     pub fn tick(&mut self) -> Result<(), anyhow::Error> {
-
         if self.last_flushed.elapsed().as_millis() > ((1000.0 / FRAME_RATE) as u128) {
             let root = BitMapBackend::<BGRXPixel>::with_buffer_and_format(
                 &mut self.buf[..],
@@ -80,15 +80,29 @@ Ok(
             let latest_time = self.data.iter().next().map(|x| x.0).unwrap_or_default();
             let window_time = self.window_time;
             chart.draw_series(self.data.iter().zip(self.data.iter().skip(1)).map(
-                |(&(x0, y0, _), &(x1, y1, _))| {
-                    PathElement::new(vec![(x0 % window_time, y0), (x0 % window_time + (x1-x0), y1)],
-                     &RED.mix(((x0 - latest_time) * 2.0).exp().into()) )
-                }))?;
+                |(&(x0, y0, _, _), &(x1, y1, _, _))| {
+                    PathElement::new(
+                        vec![(x0 % window_time, y0), (x0 % window_time + (x1 - x0), y1)],
+                        &RED.mix(((x0 - latest_time) * 2.0).exp().into()),
+                    )
+                },
+            ))?;
             chart.draw_series(self.data.iter().zip(self.data.iter().skip(1)).map(
-                |(&(x0, _, y0), &(x1, _, y1))| {
-                    PathElement::new(vec![(x0 % window_time, y0), (x0 % window_time + (x1-x0), y1)],
-                     &GREEN.mix(((x0 - latest_time) * 2.0).exp().into()) )
-                }))?;
+                |(&(x0, _, y0, _), &(x1, _, y1, _))| {
+                    PathElement::new(
+                        vec![(x0 % window_time, y0), (x0 % window_time + (x1 - x0), y1)],
+                        &GREEN.mix(((x0 - latest_time) * 2.0).exp().into()),
+                    )
+                },
+            ))?;
+            chart.draw_series(self.data.iter().zip(self.data.iter().skip(1)).map(
+                |(&(x0, _, _, y0), &(x1, _, _, y1))| {
+                    PathElement::new(
+                        vec![(x0 % window_time, y0), (x0 % window_time + (x1 - x0), y1)],
+                        &BLUE.mix(((x0 - latest_time) * 2.0).exp().into()),
+                    )
+                },
+            ))?;
 
             drop(root);
             drop(chart);
@@ -117,12 +131,12 @@ Ok(
             }
             let mut buf2 = vec![0u32; W * H];
             for i in (0..self.buf.len()).step_by(4) {
-                buf2[i / 4] = u32::from_ne_bytes(self.buf[i..i+4].try_into().unwrap());
-            };
+                buf2[i / 4] = u32::from_ne_bytes(self.buf[i..i + 4].try_into().unwrap());
+            }
             self.window.update_with_buffer(&buf2)?;
             self.last_flushed = std::time::Instant::now();
         };
 
-    Ok(())
-}
+        Ok(())
+    }
 }

@@ -21,8 +21,10 @@ extern crate npy;
 mod filter;
 mod nlmf;
 mod plot;
+mod processing;
+use processing::{Stereo2MonoCapture, Mono2StereoOutput, AECFiltering};
 
-const LATENCY_MS: f32 = 500.0;
+const LATENCY_MS: f32 = 200.0;
 
 fn main() -> Result<(), anyhow::Error> {
     // get mu from command line
@@ -93,6 +95,7 @@ fn main() -> Result<(), anyhow::Error> {
     );
     println!("Using Cable Output device: \"{}\"", output_device.name()?);
 
+
     // We'll try and use the same configuration between streams to keep it simple.
     /*
     let config: cpal::StreamConfig = cpal::StreamConfig {
@@ -103,7 +106,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     // Create a delay in case the input and output devices aren't synced.
     let latency_frames = (LATENCY_MS / 1_000.0) * config.sample_rate.0 as f32;
-    let latency_samples = latency_frames as usize * config.channels as usize;
+    let latency_samples = latency_frames as usize; //* config.channels as usize;
 
     // The buffers to share samples
     let input_ring = RingBuffer::new(latency_samples * 2);
@@ -112,8 +115,8 @@ fn main() -> Result<(), anyhow::Error> {
     let capture_ring = RingBuffer::new(latency_samples * 2);
     let (mut capture_ring_producer, mut capture_ring_consumer) = capture_ring.split();
 
-    //let output_ring = RingBuffer::new(latency_samples * 2);
-    //let (mut output_ring_producer, mut output_ring_consumer) = output_ring.split();
+    let output_ring = RingBuffer::new(latency_samples * 2);
+    let (mut output_ring_producer, mut output_ring_consumer) = output_ring.split();
 
     // Fill the samples with 0.0 equal to the length of the delay.
     for _ in 0..latency_samples {
@@ -121,158 +124,40 @@ fn main() -> Result<(), anyhow::Error> {
         // so this should never fail
         input_ring_producer.push(0.0).unwrap();
         capture_ring_producer.push(0.0).unwrap();
-        // output_ring_producer.push(0.0).unwrap();
+        output_ring_producer.push(0.0).unwrap();
     }
-
-    // debugging stuff:
-    /*
-     let (s1, r1) = channel();
-     let (s2, r2) = channel();
-     let (s3, r3) = channel();
-    */
-    let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-        let mut output_fell_behind = false;
-        let mut is_even_sample = true;
-        let mut last_sample: f32 = 0.0;
-        for &sample in data {
-            if is_even_sample {
-                is_even_sample = false;
-                last_sample = sample;
-            } else {
-                let merged_sample = 0.5 * (sample + last_sample);
-                is_even_sample = true;
-                if input_ring_producer.push(merged_sample).is_err() {
-                    output_fell_behind = true;
-                }
-            }
-            //s1.send(sample).unwrap();
-        }
-        if output_fell_behind {
-            eprintln!("(mic:) output stream fell behind: try increasing latency");
-        }
-    };
-
-    let capture_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-        let mut output_fell_behind = false;
-        let mut is_even_sample = true;
-        let mut last_sample: f32 = 0.0;
-        for &sample in data {
-            if is_even_sample {
-                is_even_sample = false;
-                last_sample = sample;
-            } else {
-                let merged_sample = 0.5 * (sample + last_sample);
-                is_even_sample = true;
-                if capture_ring_producer.push(merged_sample).is_err() {
-                    output_fell_behind = true;
-                }
-            }
-            //s2.send(sample).unwrap();
-        }
-
-        if output_fell_behind {
-            eprintln!("(capture:) output stream fell behind: try increasing latency");
-        }
-    };
-
-    let mut filter_buffer = CircularQueue::with_capacity(1024);
-    for _ in 0..1024 {
-        filter_buffer.push(0.0);
-    }
-    let weights: Vec<f32> = {
-        let mut rng = thread_rng();
-        let normal = Normal::new(0.0, 0.5)?;
-        normal
-            .sample_iter(&mut rng)
-            .take(1024)
-            .collect::<Vec<f32>>()
-    };
-    let mut filter: nlmf::NLMF<f32> = nlmf::NLMF::new(1024, mu, 1.0, weights);
-    let mut lowpass_filter = filter::Filter::new(filter::LowPass(3400.0));
-    let mut highpass_fiter = filter::Filter::new(filter::HighPass(300.0));
 
     let (s1, r1) = channel();
-    //let debug_ring = RingBuffer::new(1);
-    //let (mut debug_ring_producer, mut debug_ring_consumer) = debug_ring.split();
 
-    let mut ref_time = None;
-    let mut counter = 0;
-
-    let output_data_fn = move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
-        let mut input_fell_behind = None;
-        let mut is_odd_sample = false;
-        let mut last_sample: f32 = 0.0;
-        if ref_time.is_none() {
-            ref_time = Some(info.timestamp().callback);
-        };
-        for sample in data {
-            if is_odd_sample {
-                *sample = last_sample;
-                is_odd_sample = false;
-            } else {
-                let mic_sample = match input_ring_consumer.pop() {
-                    Ok(s) => s,
-                    Err(err) => {
-                        input_fell_behind = Some(err);
-                        0.0
-                    }
-                };
-                let capture_sample = match capture_ring_consumer.pop() {
-                    Ok(s) => s,
-                    Err(err) => {
-                        input_fell_behind = Some(err);
-                        0.0
-                    }
-                };
-                filter_buffer.push(capture_sample);
-                let mut filter_input = filter_buffer
-                    .asc_iter()
-                    .map(|&val| val)
-                    .collect::<Vec<f32>>();
-                // filter_input.push(1.0);
-                let aec_output = filter.adapt(&filter_input, mic_sample);
-                let filtered = highpass_fiter.tick(lowpass_filter.tick(mic_sample - aec_output));
-                *sample = filtered;
-                last_sample = *sample;
-                is_odd_sample = true;
-                //s3.send(last_sample).unwrap();
-                //println!("Weights: {:?}", filter_buffer);
-            }
-        }
-        if let Some(err) = input_fell_behind {
-            eprintln!(
-                "input stream fell behind: {:?}: try increasing latency",
-                err
-            );
-        }
-        /*
-        debug_ring_producer.push((info.timestamp().callback.duration_since(&ref_time.unwrap()).unwrap().as_secs_f32(),
-            filter.weights[0],
-            filter.weights[1023]
-        ));
-        */
-        counter += 1;
-        if counter == 2 {
-            s1.send((info.timestamp().callback.duration_since(&ref_time.unwrap()).unwrap().as_secs_f32(),
-               (input_ring_consumer.len() as f32) / ((latency_samples * 2) as f32),
-               (capture_ring_consumer.len() as f32) / ((latency_samples * 2) as f32),
-           )
-           ).unwrap();
-            counter = 0;
-        };
-    };
+    let mut input_processing = Stereo2MonoCapture::new(input_ring_producer);
+    let mut capture_processing = Stereo2MonoCapture::new(capture_ring_producer);
+    let mut output_processing = Mono2StereoOutput::new(output_ring_consumer);
+    let mut filter_processing = AECFiltering::new(input_ring_consumer, capture_ring_consumer, output_ring_producer, 1.0, Some(s1));
 
     // Build streams.
     println!(
         "Attempting to build streams with f32 samples and `{:?}`.",
         config
     );
-    let input_stream = input_device.build_input_stream(&config, input_data_fn, err_fn)?;
+    let input_stream = input_device.build_input_stream(
+        &config,
+        move |data: &[f32], _: &cpal::InputCallbackInfo| input_processing.callback(data),
+        err_fn,
+    )?;
     println!("Succeded input stream");
-    let capture_stream = capture_device.build_input_stream(&config, capture_data_fn, err_fn)?;
+    let capture_stream = capture_device.build_input_stream(
+        &config,
+        move |data: &[f32], _: &cpal::InputCallbackInfo| capture_processing.callback(data),
+        err_fn,
+    )?;
     println!("Succeded capture stream");
-    let output_stream = output_device.build_output_stream(&config, output_data_fn, err_fn)?;
+    let output_stream = output_device.build_output_stream(
+        &config,
+        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| output_processing.callback(data),
+        err_fn,
+    )?;
     println!("Succeded output stream");
+
 
     println!("Successfully built streams.");
 
@@ -284,24 +169,23 @@ fn main() -> Result<(), anyhow::Error> {
     output_stream.play()?;
 
     let mut plotter = plot::Plotter::new(5.0, 0.0, 1.0, 128)?;
+    println!("latency samples {}", latency_samples);
     // let mut plotter2 = plot::Plotter::new(2.0, -0.5,0.5, 65536)?;
 
     // Run for 3 seconds before closing.
     println!("Everything looks good! Press enter to exit...");
     //std::thread::sleep(std::time::Duration::from_secs(15));
+
     while !plotter.window.is_key_down(minifb::Key::Escape) {
+        filter_processing.process(); // process data
         for val in r1.try_iter() {
             plotter.data.push(val);
-        };
-    /*    if let Ok(val) = debug_ring_consumer.pop() {
-            plotter2.data.push(val);
-        };*/
+        }
         plotter.tick()?;
-    //    plotter2.tick()?;
     }
     drop(plotter);
-    //drop(plotter2);
-    let _ = stdin().read_line(&mut String::new());
+
+    // let _ = stdin().read_line(&mut String::new());
 
     drop(input_stream);
     drop(capture_stream);
