@@ -16,15 +16,14 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::RingBuffer;
 
 use std::sync::mpsc::channel;
-extern crate npy;
 
 mod filter;
 mod nlmf;
 mod plot;
 mod processing;
-use processing::{Stereo2MonoCapture, Mono2StereoOutput, AECFiltering};
+use processing::{AECFiltering, Mono2StereoOutput, Stereo2MonoCapture};
 
-const LATENCY_MS: f32 = 200.0;
+const LATENCY_MS: f32 = 100.0;
 
 fn main() -> Result<(), anyhow::Error> {
     // get mu from command line
@@ -95,7 +94,6 @@ fn main() -> Result<(), anyhow::Error> {
     );
     println!("Using Cable Output device: \"{}\"", output_device.name()?);
 
-
     // We'll try and use the same configuration between streams to keep it simple.
     /*
     let config: cpal::StreamConfig = cpal::StreamConfig {
@@ -127,12 +125,21 @@ fn main() -> Result<(), anyhow::Error> {
         output_ring_producer.push(0.0).unwrap();
     }
 
-    let (s1, r1) = channel();
-
+    /*
+        let input_samples = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let input_samples2 = input_samples.clone();
+        let output_samples = std::sync::Arc ::new(std::sync::atomic::AtomicUsize::new(0));
+        let output_samples2 = output_samples.clone();
+    */
     let mut input_processing = Stereo2MonoCapture::new(input_ring_producer);
     let mut capture_processing = Stereo2MonoCapture::new(capture_ring_producer);
     let mut output_processing = Mono2StereoOutput::new(output_ring_consumer);
-    let mut filter_processing = AECFiltering::new(input_ring_consumer, capture_ring_consumer, output_ring_producer, 1.0, Some(s1));
+    let mut filter_processing = AECFiltering::new(
+        input_ring_consumer,
+        capture_ring_consumer,
+        output_ring_producer,
+        1.0,
+    );
 
     // Build streams.
     println!(
@@ -141,6 +148,7 @@ fn main() -> Result<(), anyhow::Error> {
     );
     let input_stream = input_device.build_input_stream(
         &config,
+        // move |data: &[f32], _: &cpal::InputCallbackInfo| {input_samples2.fetch_add(data.len(), std::sync::atomic::Ordering::SeqCst); input_processing.callback(data)},
         move |data: &[f32], _: &cpal::InputCallbackInfo| input_processing.callback(data),
         err_fn,
     )?;
@@ -153,11 +161,11 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Succeded capture stream");
     let output_stream = output_device.build_output_stream(
         &config,
+        // move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {output_samples2.fetch_add(data.len(), std::sync::atomic::Ordering::SeqCst); output_processing.callback(data)},
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| output_processing.callback(data),
         err_fn,
     )?;
     println!("Succeded output stream");
-
 
     println!("Successfully built streams.");
 
@@ -168,28 +176,66 @@ fn main() -> Result<(), anyhow::Error> {
     input_stream.play()?;
     output_stream.play()?;
 
-    let mut plotter = plot::Plotter::new(5.0, 0.0, 1.0, 128)?;
     println!("latency samples {}", latency_samples);
+
+    let (plot_send, plot_receive) = channel();
+    filter_processing.debug_channel = Some(plot_send);
+    let mut plotter = plot::Plotter::new(5.0, 0.0, 1.0, 128)?;
     // let mut plotter2 = plot::Plotter::new(2.0, -0.5,0.5, 65536)?;
+
+    let processing_thread = filter_processing.start_thread();
 
     // Run for 3 seconds before closing.
     println!("Everything looks good! Press enter to exit...");
     //std::thread::sleep(std::time::Duration::from_secs(15));
 
     while !plotter.window.is_key_down(minifb::Key::Escape) {
-        filter_processing.process(); // process data
-        for val in r1.try_iter() {
+        for val in plot_receive.try_iter() {
             plotter.data.push(val);
         }
         plotter.tick()?;
     }
     drop(plotter);
 
-    // let _ = stdin().read_line(&mut String::new());
+    let filter_processing = processing_thread.kill();
+
+    let processing_thread = filter_processing.start_thread();
+
+    /*
+    let mut mean_input_freq = 0.0_f32;
+    let mut mean_output_freq = 0.0_f32;
+    let mut n = 0.0;
+    for _ in 1..10 {
+        let start_time = std::time::Instant::now();
+        let start_input = input_samples.load(std::sync::atomic::Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(2_000));
+        let elapsed = start_time.elapsed();
+        let stop_input = input_samples.load(std::sync::atomic::Ordering::SeqCst);
+        let input_freq = 0.5 * (stop_input - start_input) as f32 / elapsed.as_secs_f32();
+        mean_input_freq += input_freq;
+
+        let start_time = std::time::Instant::now();
+        let start_output = output_samples.load(std::sync::atomic::Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(2_000));
+        let elapsed = start_time.elapsed();
+        let stop_output = output_samples.load(std::sync::atomic::Ordering::SeqCst);
+        let output_freq = 0.5 * (stop_output - start_output) as f32 / elapsed.as_secs_f32();
+        mean_output_freq += output_freq;
+
+        println!("freqs: {} Hz ({})  {} Hz ({})", input_freq, (stop_input - start_input), output_freq, (stop_output - start_output));
+
+        n += 1.0;
+    };
+    println!("mean freqs: {} Hz   {} Hz", mean_input_freq / n, mean_output_freq / n);
+    */
+
+    let _ = stdin().read_line(&mut String::new());
 
     drop(input_stream);
     drop(capture_stream);
     drop(output_stream);
+    //s1.send(()); // this should make the processing thread exit
+    //processing_thread.join().unwrap();
     /*
         let mic = r1.iter().collect::<Vec<f32>>();
         let capture = r2.iter().collect::<Vec<f32>>();

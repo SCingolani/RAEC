@@ -1,10 +1,8 @@
-
+use circular_queue::CircularQueue;
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
-use circular_queue::CircularQueue;
 
 use std::sync::mpsc;
-
 
 use crate::filter;
 use crate::nlmf;
@@ -82,16 +80,56 @@ impl Mono2StereoOutput {
     }
 }
 
+/// Struct to hold information of an instance of AECFiltering.
+/// Such an object takes ownership of the buffers involved.
 pub struct AECFiltering {
+    /// Incoming buffer of microphone data
     mic_buffer: ringbuf::Consumer<f32>,
+    /// Incoming buffer of reference data
     capture_buffer: ringbuf::Consumer<f32>,
+    /// Outgoing buffer for output
     output_buffer: ringbuf::Producer<f32>,
+    /// The adaptive FIR filter instance
     nlmf_filter: nlmf::NLMF<f32>,
+    /// The running convolution to input into the FIR filter
     filter_buffer: CircularQueue<f32>,
+    /// A low pass filter
     lowpass_filter: filter::Filter,
+    /// A high pass filter
     highpass_fiter: filter::Filter,
-    debug_channel: Option<mpsc::Sender<(f32, f32, f32, f32)>>,
+    /// Control signal to kill the processing thread
+    signal_channel: Option<mpsc::Receiver<()>>,
+    /// Debug channel to communicate out the filling state of the buffers
+    /// Message is (time (s), microphone buffer usage level (%), reference buffer usage level (%),
+    /// output buffer usage level (%)): (f32, f32, f32, f32)
+    pub debug_channel: Option<mpsc::Sender<(f32, f32, f32, f32)>>,
+    /// Used for debugging with debug channel
     start_time: std::time::Instant,
+}
+
+/// When the thread to run the filter starts the AECFiltering struct is consumed.
+/// This struct contains the thread handle and kill signal channel to be able to stop the filter.
+pub struct RunningAECFiltering {
+    kill_signal_sender: mpsc::Sender<()>,
+    thread_handle: std::thread::JoinHandle<AECFiltering>,
+}
+
+impl RunningAECFiltering {
+    fn new(
+        kill_signal_sender: mpsc::Sender<()>,
+        thread_handle: std::thread::JoinHandle<AECFiltering>,
+    ) -> Self {
+        RunningAECFiltering {
+            kill_signal_sender,
+            thread_handle,
+        }
+    }
+
+    /// kill the thread and consume the struct in the process
+    pub fn kill(self) -> AECFiltering {
+        self.kill_signal_sender.send(()).unwrap();
+        self.thread_handle.join().unwrap() // may panic if the thread panicked
+    }
 }
 
 impl AECFiltering {
@@ -101,7 +139,6 @@ impl AECFiltering {
         capture_buffer: ringbuf::Consumer<f32>,
         output_buffer: ringbuf::Producer<f32>,
         mu: f32,
-        debug_channel: Option<mpsc::Sender<(f32, f32, f32, f32)>>,
     ) -> Self {
         let weights: Vec<f32> = {
             let mut rng = thread_rng();
@@ -126,57 +163,94 @@ impl AECFiltering {
             filter_buffer,
             lowpass_filter,
             highpass_fiter,
-            debug_channel,
+            signal_channel: None,
+            debug_channel: None,
             start_time: std::time::Instant::now(),
         }
     }
 
+    /// Starts the processing thread
+    pub fn start_thread(mut self) -> RunningAECFiltering {
+        let (signal_sender, signal_receiver) = mpsc::channel();
+        self.signal_channel = Some(signal_receiver);
+        let thread_handle = std::thread::spawn(move || self.process());
+        RunningAECFiltering::new(signal_sender, thread_handle)
+    }
+
     // process all available data in input buffers
-    pub fn process(&mut self) {
-        let mut counter = 0;
-
-        // as long as there is data in *both* buffers
-        while !self.mic_buffer.is_empty() && !self.capture_buffer.is_empty() {
-            // we are guaranteed there is data here as there can be only one consumer at a time
-            let mic_sample = self.mic_buffer.pop().unwrap(); // see comment above to justify unwrap.
-            let capture_sample = self.capture_buffer.pop().unwrap(); // see comment above to justify unwrap.
-            // probably very inneficient:
-            self.filter_buffer.push(capture_sample);
-            let mut filter_input = self.filter_buffer
-                .iter()
-                .map(|&val| val) // horrible
-                .collect::<Vec<f32>>();
-            let (aec_output, novelty) = self.nlmf_filter.adapt(&filter_input, mic_sample, 0.0025);
-            let filtered = self.highpass_fiter.tick(self.lowpass_filter.tick(mic_sample - aec_output));
-
-            if counter % 1_000 == 0 {
-                counter = 0;
-                match &self.debug_channel {
-                    Some(ch) => ch.send(( self.start_time.elapsed().as_secs_f32(),
-                                              self.mic_buffer.len() as f32 / self.mic_buffer.capacity() as f32,
-                                              self.capture_buffer.len() as f32 / self.capture_buffer.capacity() as f32,
-                                              self.output_buffer.len() as f32 / self.output_buffer.capacity() as f32,
-                                              //novelty * 100.,
-                                          )).unwrap(),
-                    None => ()
-                };
+    fn process(mut self) -> Self {
+        loop {
+            let signal = self.signal_channel.as_ref().unwrap().try_recv(); // here we unwrap because the thread starter has set this channel.
+            match signal {
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    eprintln!("Processing thread was disconnected without notice");
+                    break;
+                }
+                Ok(()) => {
+                    eprintln!("Processing thread received kill signal");
+                    break;
+                }
+                _ => (),
             }
-            counter += 1;
+            let mut counter = 0;
 
-            // if we can no longer push to output buffer:
-            if self.output_buffer.push(filtered).is_err() {
-                eprintln!("(filter) output stream fell behind: try increasing latency");
-                // no longer process elements!
-                break
+            // as long as there is data in *both* buffers
+            while !self.mic_buffer.is_empty()
+                && !self.capture_buffer.is_empty()
+                && !self.output_buffer.is_full()
+            {
+                // we are guaranteed there is data here as there can be only one consumer at a time
+                let mic_sample = self.mic_buffer.pop().unwrap(); // see comment above to justify unwrap.
+                let capture_sample = self.capture_buffer.pop().unwrap(); // see comment above to justify unwrap.
+                                                                         // probably very inneficient:
+                self.filter_buffer.push(capture_sample);
+                let mut filter_input = self
+                    .filter_buffer
+                    .iter()
+                    .map(|&val| val) // horrible
+                    .collect::<Vec<f32>>();
+                let (aec_output, novelty) =
+                    self.nlmf_filter.adapt(&filter_input, mic_sample, 0.0025);
+                let filtered = self
+                    .highpass_fiter
+                    .tick(self.lowpass_filter.tick(mic_sample - aec_output));
+
+                if counter % 1_000 == 0 {
+                    counter = 0;
+                    match &self.debug_channel {
+                        Some(ch) => ch
+                            .send((
+                                self.start_time.elapsed().as_secs_f32(),
+                                self.mic_buffer.len() as f32 / self.mic_buffer.capacity() as f32,
+                                self.capture_buffer.len() as f32
+                                    / self.capture_buffer.capacity() as f32,
+                                self.output_buffer.len() as f32
+                                    / self.output_buffer.capacity() as f32,
+                                //novelty * 100.,
+                            ))
+                            .unwrap(),
+                        None => (),
+                    };
+                }
+                counter += 1;
+
+                // if we can no longer push to output buffer:
+                if self.output_buffer.push(filtered).is_err() {
+                    eprintln!("(filter) output stream fell behind: try increasing latency");
+                    // no longer process elements!
+                    break;
+                }
             }
+            // if by the time we are done the output buffer is getting very empty; fill it with zeros :/
+            if (self.output_buffer.len() as f32 / self.output_buffer.capacity() as f32) < 0.2 {
+                for _ in 0..self.output_buffer.capacity() / 2 {
+                    self.output_buffer.push(0.0);
+                }
+                eprintln!("(filter) output buffer getting empty; i.e. inputs are too slow. filling with zeroes");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            std::thread::yield_now();
         }
-        // if by the time we are done the output buffer is getting very empty; fill it with zeros :/
-        if (self.output_buffer.len() as f32 / self.output_buffer.capacity() as f32) < 0.2 {
-            for _ in 0..self.output_buffer.capacity() / 2 {
-                self.output_buffer.push(0.0);
-            }
-            eprintln!("(filter) output buffer getting empty; i.e. inputs are too slow. filling with zeroes");
-        }
-        //std::thread::sleep(std::time::Duration::from_millis(10));
+        self
     }
 }
