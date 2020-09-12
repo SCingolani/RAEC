@@ -3,12 +3,15 @@ use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
 
 use std::sync::mpsc;
+use std::sync::{Arc,Mutex};
+use std::thread::Thread;
 
 use crate::filter;
 use crate::nlmf;
 
 pub struct Stereo2MonoCapture {
     output_buffer: ringbuf::Producer<f32>,
+    parked_thread: Option<Arc<Mutex<Option<Thread>>>>
 }
 
 impl Stereo2MonoCapture {
@@ -16,6 +19,14 @@ impl Stereo2MonoCapture {
     pub fn new(buffer: ringbuf::Producer<f32>) -> Self {
         Stereo2MonoCapture {
             output_buffer: buffer,
+            parked_thread: None,
+        }
+    }
+
+    pub fn new_with_parking(buffer: ringbuf::Producer<f32>, parked_thread: Arc<Mutex<Option<Thread>>>) -> Self {
+        Stereo2MonoCapture {
+            output_buffer: buffer,
+            parked_thread: Some(parked_thread),
         }
     }
 
@@ -30,6 +41,26 @@ impl Stereo2MonoCapture {
         }
         if output_fell_behind {
             eprintln!("(capture) output stream fell behind: try increasing latency");
+        }
+    }
+
+    pub fn callback_and_unpark(&mut self, data: &[f32]) {
+        let mut output_fell_behind = false;
+        // iterate over couple of values
+        for (input_l, input_r) in data.iter().step_by(2).zip(data.iter().step_by(2).skip(1)) {
+            let merged_sample = 0.5 * (input_l + input_r);
+            if self.output_buffer.push(merged_sample).is_err() {
+                output_fell_behind = true;
+            }
+        }
+        if output_fell_behind {
+            eprintln!("(capture) output stream fell behind: try increasing latency");
+        }
+        let parked_thread_handle_lock = self.parked_thread.as_ref().unwrap().try_lock();
+        if let Ok(maybe_parked_thread_handle) = parked_thread_handle_lock {
+            if let Some(parked_thread_handle) = maybe_parked_thread_handle.as_ref() {
+                parked_thread_handle.unpark();
+            }
         }
     }
 }
@@ -111,24 +142,25 @@ pub struct AECFiltering {
 /// This struct contains the thread handle and kill signal channel to be able to stop the filter.
 pub struct RunningAECFiltering {
     kill_signal_sender: mpsc::Sender<()>,
-    thread_handle: std::thread::JoinHandle<AECFiltering>,
+    thread_join_handle: std::thread::JoinHandle<AECFiltering>,
 }
 
 impl RunningAECFiltering {
     fn new(
         kill_signal_sender: mpsc::Sender<()>,
-        thread_handle: std::thread::JoinHandle<AECFiltering>,
+        thread_join_handle: std::thread::JoinHandle<AECFiltering>,
     ) -> Self {
+        let thread = thread_join_handle.thread();
         RunningAECFiltering {
             kill_signal_sender,
-            thread_handle,
+            thread_join_handle,
         }
     }
 
     /// kill the thread and consume the struct in the process
     pub fn kill(self) -> AECFiltering {
         self.kill_signal_sender.send(()).unwrap();
-        self.thread_handle.join().unwrap() // may panic if the thread panicked
+        self.thread_join_handle.join().unwrap() // may panic if the thread panicked
     }
 }
 
@@ -169,12 +201,23 @@ impl AECFiltering {
         }
     }
 
-    /// Starts the processing thread
-    pub fn start_thread(mut self) -> RunningAECFiltering {
+    /// Starts the processing thread; will block until the thread starts and reports back its handle for unparking.
+    pub fn start_thread(mut self) -> (RunningAECFiltering, Thread) {
         let (signal_sender, signal_receiver) = mpsc::channel();
         self.signal_channel = Some(signal_receiver);
-        let thread_handle = std::thread::spawn(move || self.process());
-        RunningAECFiltering::new(signal_sender, thread_handle)
+        let thread_handle = Arc::new(Mutex::new(None));
+        let thread_handle_clone = thread_handle.clone();
+        let thread_joinhandle = std::thread::spawn(move || {
+            {
+                let mut shared_thread_handle_ref = thread_handle_clone.lock().unwrap();
+                *shared_thread_handle_ref = Some(std::thread::current());
+            }
+            self.process()
+         });
+         // spinlock until we get the started thread handle
+         while thread_handle.lock().unwrap().is_none() {std::thread::yield_now()};
+         let the_handle = thread_handle.lock().unwrap().take().unwrap();
+        (RunningAECFiltering::new(signal_sender, thread_joinhandle), the_handle)
     }
 
     // process all available data in input buffers
@@ -248,8 +291,7 @@ impl AECFiltering {
                 }
                 eprintln!("(filter) output buffer getting empty; i.e. inputs are too slow. filling with zeroes");
             }
-            std::thread::sleep(std::time::Duration::from_millis(80));
-            std::thread::yield_now();
+            std::thread::park();
         }
         self
     }

@@ -16,6 +16,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::RingBuffer;
 
 use std::sync::mpsc::channel;
+use std::sync::{Arc,Mutex};
+use std::thread::Thread;
 
 mod filter;
 mod nlmf;
@@ -131,7 +133,9 @@ fn main() -> Result<(), anyhow::Error> {
         let output_samples = std::sync::Arc ::new(std::sync::atomic::AtomicUsize::new(0));
         let output_samples2 = output_samples.clone();
     */
-    let mut input_processing = Stereo2MonoCapture::new(input_ring_producer);
+    let shared_parking_thread_handle: Arc<Mutex<Option<Thread>>> = Arc::new(Mutex::new(None));
+
+    let mut input_processing = Stereo2MonoCapture::new_with_parking(input_ring_producer, shared_parking_thread_handle.clone());
     let mut capture_processing = Stereo2MonoCapture::new(capture_ring_producer);
     let mut output_processing = Mono2StereoOutput::new(output_ring_consumer);
     let mut filter_processing = AECFiltering::new(
@@ -149,7 +153,7 @@ fn main() -> Result<(), anyhow::Error> {
     let input_stream = input_device.build_input_stream(
         &config,
         // move |data: &[f32], _: &cpal::InputCallbackInfo| {input_samples2.fetch_add(data.len(), std::sync::atomic::Ordering::SeqCst); input_processing.callback(data)},
-        move |data: &[f32], _: &cpal::InputCallbackInfo| input_processing.callback(data),
+        move |data: &[f32], _: &cpal::InputCallbackInfo| input_processing.callback_and_unpark(data),
         err_fn,
     )?;
     println!("Succeded input stream");
@@ -180,10 +184,12 @@ fn main() -> Result<(), anyhow::Error> {
 
     let (plot_send, plot_receive) = channel();
     filter_processing.debug_channel = Some(plot_send);
+
     let mut plotter = plot::Plotter::new(5.0, 0.0, 1.0, 128)?;
     // let mut plotter2 = plot::Plotter::new(2.0, -0.5,0.5, 65536)?;
 
-    let processing_thread = filter_processing.start_thread();
+    let (processing_thread, parking_thread_handle) = filter_processing.start_thread();
+    *shared_parking_thread_handle.lock().unwrap() = Some(parking_thread_handle);
 
     // Run for 3 seconds before closing.
     println!("Everything looks good! Press enter to exit...");
@@ -197,10 +203,10 @@ fn main() -> Result<(), anyhow::Error> {
     }
     drop(plotter);
 
-    let filter_processing = processing_thread.kill();
-
-    let processing_thread = filter_processing.start_thread();
-
+    let mut filter_processing = processing_thread.kill();
+    filter_processing.debug_channel = None;
+    let (processing_thread, parking_thread_handle) = filter_processing.start_thread();
+    *shared_parking_thread_handle.lock().unwrap() = Some(parking_thread_handle);
     /*
     let mut mean_input_freq = 0.0_f32;
     let mut mean_output_freq = 0.0_f32;
