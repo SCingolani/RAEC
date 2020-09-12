@@ -1,5 +1,5 @@
 [package]
-name = "AEC"
+name = "aec"
 version = "0.1.0"
 authors = ["NaOH-de"]
 edition = "2018"
@@ -18,3 +18,14 @@ rand_distr = "0.3"
 minifb = "0.13.0"
 plotters = {version = "^0.3.0", default_features = false, features = ["ttf"]}
 plotters-bitmap = {version = "^0.3.*", default_features = false}
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "my_benchmark"
+path = "src\\benches\\my_benchmark.rs"
+harness = false
+
+[profile.release]
+debug = true
