@@ -142,7 +142,7 @@ fn main() -> Result<(), anyhow::Error> {
         input_ring_consumer,
         capture_ring_consumer,
         output_ring_producer,
-        1.0,
+        mu,
     );
 
     // Build streams.
