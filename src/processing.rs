@@ -176,13 +176,12 @@ impl AECFiltering {
         mu: f32,
     ) -> Self {
         let mut weights: [f32; nlmf::N_TAPS] = [0.0; nlmf::N_TAPS];
-         {
+        {
             let mut rng = thread_rng();
             let normal = Normal::new(0.0, 0.5).unwrap();
-            normal
-                .sample_iter(&mut rng)
-                .take(nlmf::N_TAPS)
-                .enumerate().map(|(i, x)| weights[i] = x);
+            for (w, x) in weights.iter_mut().zip(normal.sample_iter(&mut rng).take(nlmf::N_TAPS)) {
+                *w = x;
+            }
         };
         let nlmf_filter: nlmf::NLMF<f32> = nlmf::NLMF::new(nlmf::N_TAPS, mu, 1.0, weights);
         let lowpass_filter = filter::Filter::new(filter::LowPass(3400.0));
@@ -296,7 +295,7 @@ impl AECFiltering {
             // if by the time we are done the output buffer is getting very empty; fill it with zeros :/
             if (self.output_buffer.len() as f32 / self.output_buffer.capacity() as f32) < 0.2 {
                 for _ in 0..self.output_buffer.capacity() / 2 {
-                    self.output_buffer.push(0.0);
+                    self.output_buffer.push(0.0).unwrap();
                 }
                 eprintln!("(filter) output buffer getting empty; i.e. inputs are too slow. filling with zeroes");
             }
