@@ -45,6 +45,7 @@ pub fn filter_adapt_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Filter");
     group.throughput(Throughput::Elements(1 as u64));
     group.bench_function("nlmf.adapt", |b| b.iter(|| black_box(nlmf_filter.adapt(data, 0.0, -1.0)) ) );
+    group.bench_function("nlmf.adapt_no_update", |b| b.iter(|| black_box(nlmf_filter.adapt(data, 0.0, 1_000.0)) ) );
 
 
 }
