@@ -5,9 +5,9 @@ use aec::nlmf;
 
 pub fn callbacks_benchmark(c: &mut Criterion) {
     let input_ring = ringbuf::RingBuffer::<f32>::new(1024);
-    let (mut input_ring_producer, mut input_ring_consumer) = input_ring.split();
+    let (input_ring_producer, mut input_ring_consumer) = input_ring.split();
     let output_ring = ringbuf::RingBuffer::<f32>::new(1024);
-    let (mut output_ring_producer, mut output_ring_consumer) = output_ring.split();
+    let (mut output_ring_producer, output_ring_consumer) = output_ring.split();
 
     let mut input_processing = Stereo2MonoCapture::new(input_ring_producer);
     let mut output_processing = Mono2StereoOutput::new(output_ring_consumer);

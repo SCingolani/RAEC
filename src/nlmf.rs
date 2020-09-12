@@ -26,7 +26,7 @@ impl<
             + Div<Output = T>,
     > NLMF<T>
 {
-    pub fn new(n: usize, mu: T, eps: T, weights: [T; N_TAPS]) -> NLMF<T> {
+    pub fn new(_n: usize, mu: T, eps: T, weights: [T; N_TAPS]) -> NLMF<T> {
         let initial_weights: [_; N_TAPS] = weights;
         NLMF {
             weights: initial_weights,
@@ -41,7 +41,7 @@ impl<
         let nu = self.mu / (self.eps + input.iter().zip(input).map(|(&x1, &x2)| x1 * x2).sum());
         //self.w += nu * x * e**3
         let mut novelty: T = T::default();
-        for (&w, &x) in self.weights.iter().zip(input) {
+        for (&_w, &x) in self.weights.iter().zip(input) {
             let dw = nu * error * x;
             novelty = if (dw * error).abs() > novelty {
                 (dw * error).abs()

@@ -96,7 +96,7 @@ impl Mono2StereoOutput {
                         last_sample = s;
                         s
                     }
-                    Err(err) => {
+                    Err(_err) => {
                         input_fell_behind = true;
                         0.0
                     }
@@ -153,7 +153,7 @@ impl RunningAECFiltering {
         kill_signal_sender: mpsc::Sender<()>,
         thread_join_handle: std::thread::JoinHandle<AECFiltering>,
     ) -> Self {
-        let thread = thread_join_handle.thread();
+        let _thread = thread_join_handle.thread();
         RunningAECFiltering {
             kill_signal_sender,
             thread_join_handle,
@@ -256,12 +256,12 @@ impl AECFiltering {
                 let capture_sample = self.capture_buffer.pop().unwrap(); // see comment above to justify unwrap.
                                                                          // probably very inneficient:
                 self.filter_buffer.push(capture_sample);
-                let mut filter_input = self
+                let filter_input = self
                     .filter_buffer
                     .iter()
                     .map(|&val| val) // horrible
                     .collect::<Vec<f32>>();
-                let (aec_output, novelty) =
+                let (aec_output, _novelty) =
                     self.nlmf_filter.adapt(&filter_input, mic_sample, 0.0025);
                 let filtered = self
                     .highpass_fiter

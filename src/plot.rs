@@ -3,10 +3,10 @@ use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use plotters::prelude::*;
 use plotters_bitmap::bitmap_pixel::BGRXPixel;
 use plotters_bitmap::BitMapBackend;
-use std::collections::VecDeque;
-use std::convert::TryInto;
-use std::error::Error;
-use std::time::SystemTime;
+
+
+
+
 
 const W: usize = 480;
 const H: usize = 320;
@@ -129,7 +129,7 @@ impl Plotter {
                     break;
                 }
             }
-            let mut buf2 =
+            let buf2 =
                 unsafe { std::slice::from_raw_parts(&self.buf[0] as *const _ as *const _, H * W) };
             self.window.update_with_buffer(&buf2)?;
             self.last_flushed = std::time::Instant::now();

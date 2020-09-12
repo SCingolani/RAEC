@@ -8,10 +8,10 @@
 
 use std::io::stdin;
 
-use rand::thread_rng;
-use rand_distr::{Distribution, Normal, NormalError};
 
-use circular_queue::CircularQueue;
+
+
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::RingBuffer;
 
@@ -107,13 +107,13 @@ fn main() -> Result<(), anyhow::Error> {
 
     // The buffers to share samples
     let input_ring = RingBuffer::new(latency_samples * 2);
-    let (mut input_ring_producer, mut input_ring_consumer) = input_ring.split();
+    let (mut input_ring_producer, input_ring_consumer) = input_ring.split();
 
     let capture_ring = RingBuffer::new(latency_samples * 2);
-    let (mut capture_ring_producer, mut capture_ring_consumer) = capture_ring.split();
+    let (mut capture_ring_producer, capture_ring_consumer) = capture_ring.split();
 
     let output_ring = RingBuffer::new(latency_samples * 2);
-    let (mut output_ring_producer, mut output_ring_consumer) = output_ring.split();
+    let (mut output_ring_producer, output_ring_consumer) = output_ring.split();
 
     // Fill the samples with 0.0 equal to the length of the delay.
     for _ in 0..latency_samples {
@@ -205,7 +205,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     let mut filter_processing = processing_thread.kill();
     filter_processing.debug_channel = None;
-    let (processing_thread, parking_thread_handle) = filter_processing.start_thread();
+    let (_processing_thread, parking_thread_handle) = filter_processing.start_thread();
     *shared_parking_thread_handle.lock().unwrap() = Some(parking_thread_handle);
     /*
     let mut mean_input_freq = 0.0_f32;
