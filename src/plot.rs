@@ -129,10 +129,7 @@ impl Plotter {
                     break;
                 }
             }
-            let mut buf2 = vec![0u32; W * H];
-            for i in (0..self.buf.len()).step_by(4) {
-                buf2[i / 4] = u32::from_ne_bytes(self.buf[i..i + 4].try_into().unwrap());
-            }
+            let mut buf2 = unsafe { std::slice::from_raw_parts(&self.buf[0] as *const _ as *const _, H * W) };
             self.window.update_with_buffer(&buf2)?;
             self.last_flushed = std::time::Instant::now();
         };
