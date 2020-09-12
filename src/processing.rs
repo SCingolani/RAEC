@@ -3,7 +3,7 @@ use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
 
 use std::sync::mpsc;
-use std::sync::{Arc,Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread::Thread;
 
 use crate::filter;
@@ -11,7 +11,7 @@ use crate::nlmf;
 
 pub struct Stereo2MonoCapture {
     output_buffer: ringbuf::Producer<f32>,
-    parked_thread: Option<Arc<Mutex<Option<Thread>>>>
+    parked_thread: Option<Arc<Mutex<Option<Thread>>>>,
 }
 
 impl Stereo2MonoCapture {
@@ -23,7 +23,10 @@ impl Stereo2MonoCapture {
         }
     }
 
-    pub fn new_with_parking(buffer: ringbuf::Producer<f32>, parked_thread: Arc<Mutex<Option<Thread>>>) -> Self {
+    pub fn new_with_parking(
+        buffer: ringbuf::Producer<f32>,
+        parked_thread: Arc<Mutex<Option<Thread>>>,
+    ) -> Self {
         Stereo2MonoCapture {
             output_buffer: buffer,
             parked_thread: Some(parked_thread),
@@ -213,11 +216,16 @@ impl AECFiltering {
                 *shared_thread_handle_ref = Some(std::thread::current());
             }
             self.process()
-         });
-         // spinlock until we get the started thread handle
-         while thread_handle.lock().unwrap().is_none() {std::thread::yield_now()};
-         let the_handle = thread_handle.lock().unwrap().take().unwrap();
-        (RunningAECFiltering::new(signal_sender, thread_joinhandle), the_handle)
+        });
+        // spinlock until we get the started thread handle
+        while thread_handle.lock().unwrap().is_none() {
+            std::thread::yield_now()
+        }
+        let the_handle = thread_handle.lock().unwrap().take().unwrap();
+        (
+            RunningAECFiltering::new(signal_sender, thread_joinhandle),
+            the_handle,
+        )
     }
 
     // process all available data in input buffers

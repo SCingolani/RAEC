@@ -129,7 +129,8 @@ impl Plotter {
                     break;
                 }
             }
-            let mut buf2 = unsafe { std::slice::from_raw_parts(&self.buf[0] as *const _ as *const _, H * W) };
+            let mut buf2 =
+                unsafe { std::slice::from_raw_parts(&self.buf[0] as *const _ as *const _, H * W) };
             self.window.update_with_buffer(&buf2)?;
             self.last_flushed = std::time::Instant::now();
         };

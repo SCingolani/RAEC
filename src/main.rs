@@ -16,7 +16,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::RingBuffer;
 
 use std::sync::mpsc::channel;
-use std::sync::{Arc,Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread::Thread;
 
 mod filter;
@@ -135,7 +135,10 @@ fn main() -> Result<(), anyhow::Error> {
     */
     let shared_parking_thread_handle: Arc<Mutex<Option<Thread>>> = Arc::new(Mutex::new(None));
 
-    let mut input_processing = Stereo2MonoCapture::new_with_parking(input_ring_producer, shared_parking_thread_handle.clone());
+    let mut input_processing = Stereo2MonoCapture::new_with_parking(
+        input_ring_producer,
+        shared_parking_thread_handle.clone(),
+    );
     let mut capture_processing = Stereo2MonoCapture::new(capture_ring_producer);
     let mut output_processing = Mono2StereoOutput::new(output_ring_consumer);
     let mut filter_processing = AECFiltering::new(
