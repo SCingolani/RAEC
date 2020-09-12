@@ -2,10 +2,12 @@ use core::fmt::Debug;
 use core::iter::Sum;
 use core::ops::{Add, Div, Mul, Sub};
 use rand_distr::num_traits::Float;
-use smallvec::{smallvec, SmallVec};
+
+pub const N_TAPS: usize = 1024;
+
 
 pub struct NLMF<T> {
-    pub weights: SmallVec<[T; 2048]>,
+    pub weights: [T; N_TAPS],
     mu: T,
     eps: T,
 }
@@ -24,8 +26,8 @@ impl<
             + Div<Output = T>,
     > NLMF<T>
 {
-    pub fn new(n: usize, mu: T, eps: T, weights: Vec<T>) -> NLMF<T> {
-        let initial_weights: SmallVec<[_; 2048]> = SmallVec::from_vec(weights);
+    pub fn new(n: usize, mu: T, eps: T, weights: [T; N_TAPS]) -> NLMF<T> {
+        let initial_weights: [_; N_TAPS] = weights;
         NLMF {
             weights: initial_weights,
             mu: mu,

@@ -175,19 +175,20 @@ impl AECFiltering {
         output_buffer: ringbuf::Producer<f32>,
         mu: f32,
     ) -> Self {
-        let weights: Vec<f32> = {
+        let mut weights: [f32; nlmf::N_TAPS] = [0.0; nlmf::N_TAPS];
+         {
             let mut rng = thread_rng();
             let normal = Normal::new(0.0, 0.5).unwrap();
             normal
                 .sample_iter(&mut rng)
-                .take(2048)
-                .collect::<Vec<f32>>()
+                .take(nlmf::N_TAPS)
+                .enumerate().map(|(i, x)| weights[i] = x);
         };
-        let nlmf_filter: nlmf::NLMF<f32> = nlmf::NLMF::new(2048, mu, 1.0, weights);
+        let nlmf_filter: nlmf::NLMF<f32> = nlmf::NLMF::new(nlmf::N_TAPS, mu, 1.0, weights);
         let lowpass_filter = filter::Filter::new(filter::LowPass(3400.0));
         let highpass_fiter = filter::Filter::new(filter::HighPass(300.0));
-        let mut filter_buffer = CircularQueue::with_capacity(2048);
-        for _ in 0..2048 {
+        let mut filter_buffer = CircularQueue::with_capacity(nlmf::N_TAPS);
+        for _ in 0..nlmf::N_TAPS {
             filter_buffer.push(0.0);
         }
         AECFiltering {

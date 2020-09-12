@@ -36,11 +36,11 @@ pub fn callbacks_benchmark(c: &mut Criterion) {
 
 pub fn filter_adapt_benchmark(c: &mut Criterion) {
 
-    let weights: Vec<f32> = vec![0.0; 2048];
+    let weights: [f32; nlmf::N_TAPS] = [0.0; nlmf::N_TAPS];
 
-    let mut nlmf_filter: nlmf::NLMF<f32> = nlmf::NLMF::new(2048, 1.0, 1.0, weights);
+    let mut nlmf_filter: nlmf::NLMF<f32> = nlmf::NLMF::new(nlmf::N_TAPS, 1.0, 1.0, weights);
 
-    let data = &[0.0; 2048];
+    let data = &[0.0; nlmf::N_TAPS];
 
     let mut group = c.benchmark_group("Filter");
     group.throughput(Throughput::Elements(1 as u64));
