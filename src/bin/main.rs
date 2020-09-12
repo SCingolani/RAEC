@@ -19,10 +19,7 @@ use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread::Thread;
 
-mod filter;
-mod nlmf;
-mod plot;
-mod processing;
+use aec::*;
 use processing::{AECFiltering, Mono2StereoOutput, Stereo2MonoCapture};
 
 const LATENCY_MS: f32 = 100.0;
