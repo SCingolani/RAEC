@@ -3,6 +3,8 @@ use core::iter::Sum;
 use core::ops::{Add, Div, Mul, Sub};
 use rand_distr::num_traits::Float;
 
+use packed_simd::f32x8;
+
 pub const N_TAPS: usize = 1024;
 
 
@@ -12,21 +14,9 @@ pub struct NLMF<T> {
     eps: T,
 }
 
-impl<
-        T: Float
-            + Default
-            + Debug
-            + Sized
-            + Copy
-            + Clone
-            + Sum
-            + Add<Output = T>
-            + Sub<Output = T>
-            + Mul<Output = T>
-            + Div<Output = T>,
-    > NLMF<T>
+impl NLMF<f32>
 {
-    pub fn new(_n: usize, mu: T, eps: T, weights: [T; N_TAPS]) -> NLMF<T> {
+    pub fn new(_n: usize, mu: f32, eps: f32, weights: [f32; N_TAPS]) -> NLMF<f32> {
         let initial_weights: [_; N_TAPS] = weights;
         NLMF {
             weights: initial_weights,
@@ -35,23 +25,38 @@ impl<
         }
     }
 
-    pub fn adapt(&mut self, input: &[T], target: T, novelty_threshold: T) -> (T, T) {
-        let output: T = self.weights.iter().zip(input).map(|(&w, &x)| w * x).sum();
-        let error = target - output;
-        let nu = self.mu / (self.eps + input.iter().zip(input).map(|(&x1, &x2)| x1 * x2).sum());
+    pub fn adapt(&mut self, input: &[f32], target: f32, novelty_threshold: f32) -> (f32, f32) {
+        // let output: f32 = self.weights.iter().zip(input).map(|(&w, &x)| w * x).sum();
+        let output: f32 = self.weights
+            .chunks_exact(8)
+            .map(f32x8::from_slice_unaligned)
+            .zip(input.chunks_exact(8).map(f32x8::from_slice_unaligned))
+            .map(|(a, b)| a * b)
+            .sum::<f32x8>()
+            .sum();
+
+        let error: f32 = target - output;
+        let input_dot = input
+            .chunks_exact(8)
+            .map(f32x8::from_slice_unaligned)
+            .zip(input.chunks_exact(8).map(f32x8::from_slice_unaligned))
+            .map(|(a, b)| a * b)
+            .sum::<f32x8>()
+            .sum();
+        let nu: f32 = self.mu / (self.eps + input_dot);
         //self.w += nu * x * e**3
-        let mut novelty: T = T::default();
-        for (&_w, &x) in self.weights.iter().zip(input) {
-            let dw = nu * error * x;
-            novelty = if (dw * error).abs() > novelty {
-                (dw * error).abs()
-            } else {
-                novelty
-            };
+        let mut novelty: f32 = 0.0;
+        let mut dws: [f32; N_TAPS] = [0.0; N_TAPS];
+        for (i, x) in input.iter().enumerate() {
+            let dw: f32 = nu * error * x;
+            let nov = (dw * error).abs();
+            if nov > novelty {
+                novelty = nov;
+            }
+            dws[i] = dw;
         }
         if novelty < novelty_threshold {
-            for (w, &x) in self.weights.iter_mut().zip(input) {
-                let dw = nu * error * x;
+            for (w, dw) in self.weights.iter_mut().zip(dws.iter()) {
                 *w = *w + dw;
                 assert!(!(w.is_nan()));
             }
