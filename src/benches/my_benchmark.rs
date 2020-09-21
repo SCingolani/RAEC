@@ -40,12 +40,10 @@ pub fn filter_adapt_benchmark(c: &mut Criterion) {
 
     let mut nlmf_filter: nlmf::NLMF<f32> = nlmf::NLMF::new(nlmf::N_TAPS, 1.0, 1.0, weights);
 
-    let data = &[0.0; nlmf::N_TAPS];
-
     let mut group = c.benchmark_group("Filter");
     group.throughput(Throughput::Elements(1 as u64));
-    group.bench_function("nlmf.adapt", |b| b.iter(|| black_box(nlmf_filter.adapt(data, 0.0, -1.0)) ) );
-    group.bench_function("nlmf.adapt_no_update", |b| b.iter(|| black_box(nlmf_filter.adapt(data, 0.0, 1_000.0)) ) );
+    group.bench_function("nlmf.adapt", |b| b.iter(|| black_box(nlmf_filter.adapt(0.0, 0.0, -1.0)) ) );
+    group.bench_function("nlmf.adapt_no_update", |b| b.iter(|| black_box(nlmf_filter.adapt(0.0, 0.0, f32::MAX)) ) );
 
 
 }

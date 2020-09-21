@@ -261,7 +261,7 @@ impl AECFiltering {
                     .map(|&val| val) // horrible
                     .collect::<Vec<f32>>();
                 let (aec_output, _novelty) =
-                    self.nlmf_filter.adapt(&filter_input, mic_sample, 0.0025);
+                    self.nlmf_filter.adapt(capture_sample, mic_sample, 0.0025);
                 let filtered = self
                     .highpass_fiter
                     .tick(self.lowpass_filter.tick(mic_sample - aec_output));
