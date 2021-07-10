@@ -8,10 +8,6 @@
 
 use std::io::stdin;
 
-
-
-
-
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::RingBuffer;
 

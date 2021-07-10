@@ -179,7 +179,10 @@ impl AECFiltering {
         {
             let mut rng = thread_rng();
             let normal = Normal::new(0.0, 0.5).unwrap();
-            for (w, x) in weights.iter_mut().zip(normal.sample_iter(&mut rng).take(nlmf::N_TAPS)) {
+            for (w, x) in weights
+                .iter_mut()
+                .zip(normal.sample_iter(&mut rng).take(nlmf::N_TAPS))
+            {
                 *w = x;
             }
         };

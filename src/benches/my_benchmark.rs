@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
-use aec::processing::{Mono2StereoOutput, Stereo2MonoCapture};
 use aec::nlmf;
+use aec::processing::{Mono2StereoOutput, Stereo2MonoCapture};
 
 pub fn callbacks_benchmark(c: &mut Criterion) {
     let input_ring = ringbuf::RingBuffer::<f32>::new(1024);
@@ -35,17 +35,18 @@ pub fn callbacks_benchmark(c: &mut Criterion) {
 }
 
 pub fn filter_adapt_benchmark(c: &mut Criterion) {
-
     let weights: [f32; nlmf::N_TAPS] = [0.0; nlmf::N_TAPS];
 
     let mut nlmf_filter: nlmf::NLMF<f32> = nlmf::NLMF::new(nlmf::N_TAPS, 1.0, 1.0, weights);
 
     let mut group = c.benchmark_group("Filter");
     group.throughput(Throughput::Elements(1 as u64));
-    group.bench_function("nlmf.adapt", |b| b.iter(|| black_box(nlmf_filter.adapt(0.0, 0.0, -1.0)) ) );
-    group.bench_function("nlmf.adapt_no_update", |b| b.iter(|| black_box(nlmf_filter.adapt(0.0, 0.0, f32::MAX)) ) );
-
-
+    group.bench_function("nlmf.adapt", |b| {
+        b.iter(|| black_box(nlmf_filter.adapt(0.0, 0.0, -1.0)))
+    });
+    group.bench_function("nlmf.adapt_no_update", |b| {
+        b.iter(|| black_box(nlmf_filter.adapt(0.0, 0.0, f32::MAX)))
+    });
 }
 
 criterion_group!(callbacks, callbacks_benchmark);

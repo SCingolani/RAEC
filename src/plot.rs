@@ -4,10 +4,6 @@ use plotters::prelude::*;
 use plotters_bitmap::bitmap_pixel::BGRXPixel;
 use plotters_bitmap::BitMapBackend;
 
-
-
-
-
 const W: usize = 480;
 const H: usize = 320;
 
