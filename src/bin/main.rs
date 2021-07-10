@@ -6,88 +6,184 @@
 //! Uses a delay of `LATENCY_MS` milliseconds in case the default input and output streams are not
 //! precisely synchronised.
 
-use std::io::stdin;
-
+use aec::*;
+use clap::{App, Arg};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use processing::{AECFiltering, Mono2StereoOutput, Stereo2MonoCapture};
 use ringbuf::RingBuffer;
-
+use std::io::stdin;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread::Thread;
 
-use aec::*;
-use processing::{AECFiltering, Mono2StereoOutput, Stereo2MonoCapture};
-
 const LATENCY_MS: f32 = 100.0;
 
-fn main() -> Result<(), anyhow::Error> {
-    // get mu from command line
-    let args: Vec<String> = std::env::args().collect();
-    const DEFAULT_MU: f32 = 1.0;
-    let mu: f32 = match args.len() {
-        // one argument passed
-        2 => match args[1].parse() {
-            Ok(val) => val,
-            _ => {
-                eprintln!(
-                    "Failed to parse mu value from command line; using default = {}.",
-                    DEFAULT_MU
-                );
-                DEFAULT_MU
+fn list_devices() -> Result<(), anyhow::Error> {
+    // Adapted from https://github.com/RustAudio/cpal/blob/269c60fde0c1c09fbdf50d65d7bf0d3a4e8d217c/examples/enumerate.rs
+    println!("Supported hosts:\n  {:?}", cpal::ALL_HOSTS);
+    let available_hosts = cpal::available_hosts();
+    println!("Available hosts:\n  {:?}", available_hosts);
+
+    for host_id in available_hosts {
+        println!("{}", host_id.name());
+        let host = cpal::host_from_id(host_id)?;
+
+        let default_in = host.default_input_device().map(|e| e.name().unwrap());
+        let default_out = host.default_output_device().map(|e| e.name().unwrap());
+        println!("  Default Input Device:\n    {:?}", default_in);
+        println!("  Default Output Device:\n    {:?}", default_out);
+
+        let devices = host.devices()?;
+        println!("  Devices: ");
+        for (device_index, device) in devices.enumerate() {
+            println!("  {}. \"{}\"", device_index, device.name()?);
+
+            // Input configs
+            if let Ok(conf) = device.default_input_config() {
+                println!("    Default input stream config:\n      {:?}", conf);
             }
-        },
-        _ => {
-            eprintln!("No value of mu given; using default = {}.", DEFAULT_MU);
-            DEFAULT_MU
+            let input_configs = match device.supported_input_configs() {
+                Ok(f) => f.collect(),
+                Err(e) => {
+                    println!("    Error getting supported input configs: {:?}", e);
+                    Vec::new()
+                }
+            };
+            if !input_configs.is_empty() {
+                println!("    All supported input stream configs:");
+                for (config_index, config) in input_configs.into_iter().enumerate() {
+                    println!("      {}.{}. {:?}", device_index, config_index, config);
+                }
+            }
+
+            // Output configs
+            if let Ok(conf) = device.default_output_config() {
+                println!("    Default output stream config:\n      {:?}", conf);
+            }
+            let output_configs = match device.supported_output_configs() {
+                Ok(f) => f.collect(),
+                Err(e) => {
+                    println!("    Error getting supported output configs: {:?}", e);
+                    Vec::new()
+                }
+            };
+            if !output_configs.is_empty() {
+                println!("    All supported output stream configs:");
+                for (config_index, config) in output_configs.into_iter().enumerate() {
+                    println!("      {}.{}. {:?}", device_index, config_index, config);
+                }
+            }
         }
-    };
+    }
 
-    let host = cpal::default_host();
+    Ok(())
+}
 
-    // Default devices.
-    let input_device = {
-        host.devices()
-            .expect("failed to get devices")
-            .filter(|device| {
-                device
-                    .name()
-                    .expect("failed to get name of device")
-                    .contains("Mikrofon")
-            })
-            .next()
+fn main() -> Result<(), anyhow::Error> {
+    // Parse CLI arguments
+    let matches = App::new("RAEC")
+        .version("0.1")
+        .author("")
+        .about("Simple acoustic echo cancellation experiment.")
+        .arg(
+            Arg::with_name("host_id")
+                .long("host")
+                .value_name("HOST_ID")
+                .help("Sets the audio host to use")
+                .takes_value(true), //.group("device_ids"),
+        )
+        .arg(
+            Arg::with_name("mic_device_id")
+                .short("m")
+                .long("microphone")
+                .value_name("MICROPHONE_DEVICE_ID")
+                .help("Sets which device to use as the microphone signal")
+                .takes_value(true), //.group("device_ids"),
+        )
+        .arg(
+            Arg::with_name("capture_device_id")
+                .short("c")
+                .long("capture")
+                .value_name("CAPTURE_DEVICE_ID")
+                .help("Sets which device to use as the capture signal")
+                .takes_value(true), //.group("device_ids"),
+        )
+        .arg(
+            Arg::with_name("output_device_id")
+                .short("o")
+                .long("output")
+                .value_name("OUTPUT_DEVICE_ID")
+                .help("Sets which device to use as the output signal")
+                .takes_value(true), //.group("device_ids"),
+        )
+        .arg(
+            Arg::with_name("list_devices")
+                .short("l")
+                .long("list")
+                .help("List available audio devices and their IDs"),
+        )
+        .arg(
+            Arg::with_name("mu")
+                .long("mu")
+                .default_value("1.0")
+                .help("Adaptive filter step size"),
+        )
+        .get_matches();
+
+    if matches.is_present("list_devices") {
+        return list_devices();
     }
-    .expect("failed to get Mikrofon device");
-    let capture_device = {
-        host.devices()
-            .expect("failed to get devices")
-            .filter(|device| {
-                device
-                    .name()
-                    .expect("failed to get name of device")
-                    .contains("Stereomix")
-            })
-            .next()
-    }
-    .expect("failed to get stereomix device");
-    let output_device = {
-        host.devices()
-            .expect("failed to get devices")
-            .filter(|device| {
-                device
-                    .name()
-                    .expect("failed to get name of device")
-                    .contains("CABLE Input")
-            })
-            .next()
-    }
-    .expect("failed to get CABLE Input device");
+
+    assert!(
+        matches.is_present("host_id") &&
+        matches.is_present("mic_device_id") &&
+        matches.is_present("capture_device_id") &&
+        matches.is_present("output_device_id") ,
+        "You must provide the IDs of the devices to use as well as the name of the audio host. See raec --help."
+    );
+
+    let mu = matches
+        .value_of("mu")
+        .unwrap() // SAFETY: "mu" has a default value
+        .parse()
+        .expect("Could not parse the value of mu");
+
+    let host_id = matches.value_of("host_id").unwrap(); // SAFETY: we already checked that the group of IDs is present
+    let host = cpal::host_from_id(
+        cpal::available_hosts()
+            .into_iter()
+            .find(|id| id.name() == host_id)
+            .expect(format!("Could not find the host \"{}\"", host_id).as_str()),
+    )?;
+
+    // Devices
+    // Microphone:
+    let input_device =
+        host.devices()?
+        .nth(matches.value_of("mic_device_id").unwrap()// SAFETY: We have checked already that the id is present in the arguments
+            .parse()
+            .expect("Failed to parse microphone ID; use raec --list to see a list of devices and use the corresponding number of the wished entry on the list as the ID.")
+        )
+        .expect("Failed to open microphone device");
+    // Capture:
+    let capture_device =
+        host.devices()?
+        .nth(matches.value_of("capture_device_id").unwrap()// SAFETY: We have checked already that the id is present in the arguments
+            .parse()
+            .expect("Failed to parse capture ID; use raec --list to see a list of devices and use the corresponding number of the wished entry on the list as the ID.")
+        )
+        .expect("Failed to open capture device");
+    let output_device =
+        host.devices()?
+        .nth(matches.value_of("output_device_id").unwrap()// SAFETY: We have checked already that the id is present in the arguments
+            .parse()
+            .expect("Failed to parse output ID; use raec --list to see a list of devices and use the corresponding number of the wished entry on the list as the ID.")
+        )
+        .expect("Failed to open output device");
 
     println!("Using input device: \"{}\"", input_device.name()?);
-    println!(
-        "Using stereomix output device: \"{}\"",
-        capture_device.name()?
-    );
-    println!("Using Cable Output device: \"{}\"", output_device.name()?);
+    println!("Using capture device: \"{}\"", capture_device.name()?);
+    println!("Using output device: \"{}\"", output_device.name()?);
 
     // We'll try and use the same configuration between streams to keep it simple.
     /*
