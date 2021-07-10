@@ -1,16 +1,11 @@
-use core::fmt::Debug;
-use core::iter::Sum;
-use core::ops::{Add, Div, Mul, Sub};
-use rand_distr::num_traits::Float;
-
-use itertools::Itertools;
-
 use circular_queue::CircularQueue;
-
+use itertools::Itertools;
 use packed_simd::f32x8;
-use std::mem::MaybeUninit;
 
 pub const N_TAPS: usize = 1024;
+
+// TODO: Either remove generic definition over some numeric type, or write the code to properly support this.
+// Right now only the implementation for f32 is written out, and is specific since it uses SIMD optimizations.
 
 pub struct NLMF<T> {
     inputs: CircularQueue<T>,
@@ -28,7 +23,7 @@ impl NLMF<f32> {
         );
         let mut initial_inputs = CircularQueue::with_capacity(n);
         let mut inputs_dot = CircularQueue::with_capacity(n);
-        for i in 0..n {
+        for _ in 0..n {
             initial_inputs.push(0.0);
             inputs_dot.push(0.0);
         }
@@ -45,32 +40,6 @@ impl NLMF<f32> {
         // let output: f32 = self.weights.iter().zip(input).map(|(&w, &x)| w * x).sum();
         self.inputs.push(input);
         self.inputs_dot.push(input * input);
-        /*
-        let input_chunks = {
-            // initialize array uninitialized:
-            let mut data: [MaybeUninit<[f32; 8]>; N_TAPS / 8] = unsafe {
-                MaybeUninit::uninit().assume_init()
-            };
-            for (elem, chunk) in data.iter_mut().zip(self.inputs.asc_iter().chunks(8).into_iter()) {
-                let init_chunk = {
-                    let uninit_chunk: [MaybeUninit<f32>; 8] = unsafe {
-                        MaybeUninit::uninit().assume_init()
-                    };
-                    for (elem_in_chunk, &x) in uninit_chunk.iter_mut().zip(chunk) {
-                        *elem_in_chunk = MaybeUninit::new(x);
-                    }
-                    // Everything is initialized. Transmute the array to the
-                    // initialized type.
-                    unsafe { std::mem::transmute::<_, [f32; 8]>(uninit_chunk) }
-                };
-
-                *elem = MaybeUninit::new(init_chunk);
-            }
-            // Everything is initialized. Transmute the array to the
-            // initialized type.
-            unsafe { std::mem::transmute::<_, [[f32; 8]; N_TAPS / 8]>(data) }
-        };
-        */
 
         let current_input = self.inputs.asc_iter().map(|&val| val).collect_vec();
         let output: f32 = current_input
@@ -84,22 +53,7 @@ impl NLMF<f32> {
             .map(|(a, b)| a * b)
             .sum::<f32x8>()
             .sum();
-        /*
-        let output: f32 = self.inputs.asc_iter()
-            .chunks(8)
-            .into_iter()
-            .map(|chunk_iter| {
-                let mut arr: [f32; 8] = [0.0; 8];
-                for (x, &x_in_chunk) in arr.iter_mut().zip(chunk_iter) {
-                    *x = x_in_chunk;
-                }
-                f32x8::from_slice_unaligned(&arr)
-                })
-            .zip(self.weights.chunks_exact(8).map(f32x8::from_slice_unaligned))
-            .map(|(a, b)| a * b)
-            .sum::<f32x8>()
-            .sum();
-            */
+
         let error: f32 = target - output;
         let input_dot: f32 = self
             .inputs_dot
@@ -144,7 +98,7 @@ mod tests {
         for input in filter_input {
             let (_, _) = nlmf_filter.adapt(input, target, f32::MAX);
         }
-        const ref_weights: [f32; 1024] = [
+        const REF_WEIGHTS: [f32; 1024] = [
             0.0,
             0.024178036,
             0.024142694,
@@ -1171,7 +1125,7 @@ mod tests {
             247.46121,
         ];
 
-        for (&ref_weight, &weight) in ref_weights.iter().zip(nlmf_filter.weights.iter()) {
+        for (&ref_weight, &weight) in REF_WEIGHTS.iter().zip(nlmf_filter.weights.iter()) {
             assert!(
                 approx_eq!(f32, ref_weight, weight, ulps = 10),
                 "failed weight: {} {}",

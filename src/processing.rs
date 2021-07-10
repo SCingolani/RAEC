@@ -256,13 +256,7 @@ impl AECFiltering {
                 // we are guaranteed there is data here as there can be only one consumer at a time
                 let mic_sample = self.mic_buffer.pop().unwrap(); // see comment above to justify unwrap.
                 let capture_sample = self.capture_buffer.pop().unwrap(); // see comment above to justify unwrap.
-                                                                         // probably very inneficient:
                 self.filter_buffer.push(capture_sample);
-                let filter_input = self
-                    .filter_buffer
-                    .iter()
-                    .map(|&val| val) // horrible
-                    .collect::<Vec<f32>>();
                 let (aec_output, _novelty) =
                     self.nlmf_filter.adapt(capture_sample, mic_sample, 0.0025);
                 let filtered = self
