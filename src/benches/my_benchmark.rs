@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
-use aec::nlmf;
-use aec::processing::{Mono2StereoOutput, Stereo2MonoCapture};
+use raec::nlmf;
+use raec::processing::{Mono2StereoOutput, Stereo2MonoCapture};
 
 pub fn callbacks_benchmark(c: &mut Criterion) {
     let input_ring = ringbuf::RingBuffer::<f32>::new(1024);

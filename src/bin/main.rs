@@ -6,10 +6,10 @@
 //! Uses a delay of `LATENCY_MS` milliseconds in case the default input and output streams are not
 //! precisely synchronised.
 
-use aec::*;
 use clap::{App, Arg};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use processing::{AECFiltering, Mono2StereoOutput, Stereo2MonoCapture};
+use raec::*;
 use ringbuf::RingBuffer;
 use std::io::stdin;
 use std::sync::{Arc, Mutex};
